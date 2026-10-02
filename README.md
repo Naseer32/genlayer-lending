@@ -68,9 +68,19 @@ Loan statuses: `open`, `active`, `repaid`, `liquidated`, `cancelled`.
 
 `liquidate_by_price` uses `gl.vm.run_nondet_unsafe` with a custom validator function. The
 leader fetches the reference price from a fixed CoinGecko URL built from an allowlisted
-asset, and every validator fetches the price again on its own. A validator accepts the
-leader's price only if its own price is within 2% of it. This is a real numeric agreement
-check, not a format check, so a manipulated or stale leader value is rejected.
+asset and returns both the price and the liquidation decision (`price < trigger`). Every
+validator fetches the price again on its own and accepts the leader only if all three
+checks pass:
+
+1. its own price is within 2% of the leader's price,
+2. the leader's decision actually follows from the leader's own price, and
+3. its own price reaches the same threshold outcome (same side of the loan's trigger).
+
+Check 3 matters because two prices within 2% of each other can still sit on opposite sides
+of a trigger. Without it a validator could approve a liquidation that its own price would
+reject. Near the trigger the validators therefore disagree and the call fails closed
+(no liquidation) instead of liquidating on a borderline price. This is a real numeric and
+decision agreement check, not a format check.
 
 Price references are chosen from an allowlist (ETH, BTC, SOL) and never built from free user
 input, so users cannot point the oracle at arbitrary URLs.
@@ -111,7 +121,7 @@ would use a price source for the actual collateral asset.
 
 ## Repository layout
 
-```text
+```
 contracts/lending_protocol.py   the Intelligent Contract
 tests/test_lending.py           automated tests (gltest / pytest)
 TESTING.md                      test plan, automated suite, on-chain evidence
@@ -127,7 +137,7 @@ README.md                       this file
 
 Run the automated tests:
 
-```bash
+```
 pip install genlayer-test pytest
 gltest tests/test_lending.py
 ```

@@ -15,7 +15,9 @@ import json
 #   liquidate_overdue. Lender is paid from collateral (plus penalty).
 # - Default path 2 (oracle): if the lender set a price trigger, the lender can
 #   call liquidate_by_price. Validators independently fetch the reference
-#   price and must agree within a tolerance before liquidation is allowed.
+#   price and must agree on BOTH the price (within a tolerance) AND the
+#   threshold outcome (price below the loan's trigger) before liquidation
+#   is allowed.
 #
 # Safety rules:
 # - State is always updated BEFORE any transfer is emitted.
@@ -131,28 +133,47 @@ class LendingProtocol(gl.Contract):
             raise Exception("invalid price")
         return price
 
-    def _consensus_price(self, price_ref: str) -> int:
+    def _consensus_price_check(self, price_ref: str, trigger_e6: int) -> dict:
+        # Returns {"price": int, "below": bool}. Consensus binds BOTH the price
+        # (within tolerance) AND the liquidation decision (price < trigger):
+        # a validator rejects the leader unless its own fetched price lands on
+        # the same side of the trigger, so no validator can approve a
+        # liquidation that its own price would reject.
         if price_ref not in ASSETS:
             raise Exception("unsupported price reference")
         coin_id = ASSETS[price_ref]
 
         def leader_fn():
-            return self._fetch_price_e6(coin_id)
+            price = self._fetch_price_e6(coin_id)
+            return {"price": price, "below": price < trigger_e6}
 
         def validator_fn(leader_result) -> bool:
             if not isinstance(leader_result, gl.vm.Return):
                 return False
-            theirs = int(leader_result.calldata)
             try:
-                mine = self._fetch_price_e6(coin_id)
+                their_price = int(leader_result.calldata["price"])
+                their_below = bool(leader_result.calldata["below"])
             except Exception:
                 return False
-            if theirs <= 0 or mine <= 0:
+            try:
+                my_price = self._fetch_price_e6(coin_id)
+            except Exception:
                 return False
-            diff = abs(theirs - mine)
-            return diff * BPS <= max(theirs, mine) * PRICE_TOLERANCE_BPS
+            if their_price <= 0 or my_price <= 0:
+                return False
+            # 1. numeric agreement within tolerance
+            diff = abs(their_price - my_price)
+            if diff * BPS > max(their_price, my_price) * PRICE_TOLERANCE_BPS:
+                return False
+            # 2. leader's decision must follow from the leader's own price
+            if their_below != (their_price < trigger_e6):
+                return False
+            # 3. my own price must reach the same threshold outcome
+            if their_below != (my_price < trigger_e6):
+                return False
+            return True
 
-        return int(gl.vm.run_nondet_unsafe(leader_fn, validator_fn))
+        return gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
 
     def _to_dict(self, loan: Loan) -> dict:
         return {
@@ -315,9 +336,14 @@ class LendingProtocol(gl.Contract):
         if trigger == 0:
             raise Exception("no price trigger set on this loan")
 
-        price = self._consensus_price(loan.price_ref)
+        result = self._consensus_price_check(loan.price_ref, trigger)
+        price = int(result["price"])
+        below = bool(result["below"])
+        # consensus already bound price and decision together; re-check anyway
+        if below != (price < trigger):
+            raise Exception("oracle result inconsistent")
         loan.last_price_e6 = u256(price)
-        if price >= trigger:
+        if not below:
             raise Exception("price is above the liquidation trigger")
         # Borrower is not in default: lender is made whole, no penalty.
         self._seize(loan, int(loan.repay_amount))
