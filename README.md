@@ -7,7 +7,8 @@ price oracle.
 
 - Contract: `contracts/lending_protocol.py` (class `LendingProtocol`)
 - Network: GenLayer Bradbury testnet
-- Deployed address: `0x6d1eF034052c5455996829849bBE3aD97AA8c66A`
+- Deployed address (v1.1.0): `0x6894FDA554e72179E067057495706cAfd5691E33`
+- Earlier version v1.0.0 (superseded): `0x6d1eF034052c5455996829849bBE3aD97AA8c66A`
 - Evidence and test results: see [TESTING.md](TESTING.md)
 
 ## How it works

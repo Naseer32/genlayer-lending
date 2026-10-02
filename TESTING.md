@@ -1,15 +1,33 @@
 # Testing: GenLayer P2P Lending Protocol
 
 - Contract: `contracts/lending_protocol.py` (class `LendingProtocol`)
-- Address: `0x6d1eF034052c5455996829849bBE3aD97AA8c66A`
+- Current address (v1.1.0): `0x6894FDA554e72179E067057495706cAfd5691E33`
+- Earlier address (v1.0.0, superseded): `0x6d1eF034052c5455996829849bBE3aD97AA8c66A`
 - Network: GenLayer Bradbury Testnet
 - Test dates: October 1 and 2, 2026
+
+## 0. What changed in v1.1.0
+
+Steward review of v1.0.0 found that the oracle consensus did not bind the liquidation
+decision: a validator accepted the leader's price whenever it was within 2% of its own
+price, but those two prices could sit on opposite sides of a loan's liquidation trigger, so
+a validator could approve a liquidation that its own price would reject.
+
+v1.1.0 fixes this in `liquidate_by_price` (function `_consensus_price_check`). The leader
+returns both the price and the decision (`price < trigger`). Each validator accepts only if:
+
+1. its own price is within 2% of the leader's price,
+2. the leader's decision follows from the leader's own price, and
+3. its own price reaches the same threshold outcome (same side of the trigger).
+
+Near the trigger the validators therefore disagree and the call fails closed (no
+liquidation). Nothing else in the contract changed.
 
 ## 1. Automated tests
 
 File: `tests/test_lending.py` (20 test cases, gltest / pytest).
 
-```bash
+```
 pip install genlayer-test pytest
 gltest tests/test_lending.py
 ```
@@ -34,10 +52,50 @@ connection the suite was completed over several runs (connection drops and one 5
 hosted Studio interrupted some runs, and the affected tests were re-run on their own).
 Every test passed, with no logic failures. On-chain evidence for Bradbury is in section 2.
 
+Version note: the 16 non-oracle tests were run against v1.0.0. After the v1.1.0 change
+(which only touches the oracle consensus function and `liquidate_by_price`), the 4 oracle
+tests were re-run and all passed (`4 passed`).
+
 The overdue liquidation path depends on real elapsed time (duration plus grace), so it is
 evidenced on-chain in section 2 rather than in the automated suite.
 
-## 2. On-chain evidence (Bradbury)
+## 2. On-chain evidence (Bradbury), current deployment v1.1.0
+
+Address: `0x6894FDA554e72179E067057495706cAfd5691E33`. These two loans exercise the changed
+oracle path with the new consensus check.
+
+### Loan #1: oracle liquidation succeeds (price below trigger)
+
+Offer created with `min_price_e6 = 1000000000000000` and `price_ref = "ETH"`, principal
+1 GEN, collateral 2 GEN.
+
+| Action | Transaction hash | Result |
+|--------|------------------|--------|
+| Create offer | `0xe7fc1925180c63ecb0641ed8e65b7708de6a2c35953eb55911830dcb6e063076` | Created offer #1 |
+| Accept offer | `0x77904298bd0bcb09f2e84c11c21b9737dd501665f5c9f7773e32e1b20c9135aa` | Accepted with 2 GEN collateral |
+| Liquidate by price (lender) | `0x0e69fee99ce9c641ac1a47d23aaeffdd775e1e5e0e3e7d45e07d43b593637b47` | `get_loan(1)` showed `liquidated` and `last_price_e6 = 2662530000` (validators agreed on about 2662.53 USD) |
+
+### Loan #2: oracle liquidation rejected (price above trigger)
+
+Offer created with `min_price_e6 = 1` and `price_ref = "ETH"`, principal 1 GEN, collateral
+2 GEN.
+
+| Action | Transaction hash | Result |
+|--------|------------------|--------|
+| Create offer | `0x1fbede701813426080ac5f30fdb13fc184db480c00223adbbc79706d49326122` | Created offer #2 |
+| Accept offer | `0xe09110d1ef58b786be9d9d55aeb490406dd2a563fb4125a180871021d03ce76f` | Accepted with 2 GEN collateral |
+| Liquidate by price (lender) | `0xe1b1d2fe05c6f4eb43808c8195418da083749cacd958dbae6db5945663ec0504` | Rolled back; `get_loan(2)` stayed `active` with `last_price_e6 = 0` |
+
+Not covered on-chain: the cross-threshold case (leader and validator prices on opposite
+sides of the trigger). It cannot be forced on a live network because it depends on real
+market prices moving inside a 2% band around a trigger. It is covered by the design of the
+validator function (check 3 above), not by a recorded transaction.
+
+## 2b. Earlier deployment (v1.0.0, address `0x6d1eF034052c5455996829849bBE3aD97AA8c66A`)
+
+Evidence from the first version. Everything except the price-liquidation tests (loans #5
+and #6 below) exercises code that v1.1.0 did not change. Loans #5 and #6 are superseded by
+the v1.1.0 evidence above.
 
 Read calls such as `get_loan` and `get_total_locked` were used to verify state after each
 step, but they do not produce transaction hashes and are not listed.
