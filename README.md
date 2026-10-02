@@ -1,68 +1,133 @@
-# BugBounty: Automated Bug Bounties on GenLayer
+# GenLayer P2P Lending Protocol
 
-An Intelligent Contract that lets a maintainer post a bounty against a repo issue and lets GenLayer validators decide, using an LLM, whether a contributor's pull request is merged and how severe the fixed bug is. The severity tier is agreed on by validator consensus, so no single party decides the outcome.
+A peer-to-peer lending and borrowing Intelligent Contract for GenLayer, written in Python.
+Lenders post loan offers in native GEN, borrowers take them by posting over-collateralized
+GEN, and defaults are settled either by a deterministic deadline or by a validator-consensus
+price oracle.
 
-- **Network:** GenLayer Studio (studionet)
-- **Contract address:** `0xaD495de36EA054f66e6a7fBF65aB2B36F24e76cF`
-- **Contract file:** `contracts/bug_bounty.py`
-
-## Why GenLayer
-
-Judging a pull request is subjective and lives on the open web. A normal smart contract cannot read a GitHub page or interpret it. Here, every validator fetches the PR page itself (`gl.nondet.web.render`), asks an LLM for a structured verdict (`gl.nondet.exec_prompt`), and the network must agree on the result (`gl.eq_principle.strict_eq`) before the bounty state changes.
+- Contract: `contracts/lending_protocol.py` (class `LendingProtocol`)
+- Network: GenLayer Bradbury testnet
+- Deployed address: `0x6d1eF034052c5455996829849bBE3aD97AA8c66A`
+- Evidence and test results: see [TESTING.md](TESTING.md)
 
 ## How it works
 
-1. **`create_bounty(repo_url, issue_id, amount)`** creates a bounty keyed by the creator's address. Returns an id such as `issue-42_0`.
-2. **`resolve_bounty(creator, bounty_id, pr_url, contributor)`**:
-   - each validator fetches the PR page and asks the LLM for `{"merged": bool, "severity": "critical|high|medium|low"}`
-   - validators must return identical JSON (strict equality)
-   - if the PR is merged and the severity is valid, the bounty becomes `resolved` and records the PR, severity, and contributor
-3. **`cancel_bounty(bounty_id)`** lets the creator cancel an open bounty.
-4. **`get_bounties()`** and **`get_bounty(creator, bounty_id)`** are read-only views.
+1. **Offer.** A lender calls `create_offer` and sends the principal as value. The lender
+   chooses the interest rate, duration, required collateral ratio, and an optional price
+   trigger. The principal is held in escrow by the contract.
+2. **Accept.** A borrower calls `accept_offer` and sends collateral (at least the required
+   amount). The contract updates state first, then pays the principal to the borrower.
+3. **Repay.** The borrower calls `repay` with at least principal + interest. The lender is
+   paid, and the borrower gets the collateral back plus any overpayment.
+4. **Default.** If the borrower does not repay, one of two liquidations applies:
+   - `liquidate_overdue` (deterministic): callable by anyone after due date + grace period.
+     The lender receives owed amount + penalty from the collateral; the borrower keeps the
+     remainder.
+   - `liquidate_by_price` (oracle): callable by the lender only, on loans that have a price
+     trigger. Validators fetch the reference price independently and must agree before the
+     liquidation can happen. The lender receives the owed amount (no penalty, because the
+     borrower is not in default); the borrower keeps the remainder.
+5. **Cancel.** A lender can cancel an offer nobody has accepted and get the principal back.
 
-Severity tiers map to payout percentages of the escrowed amount: critical 100%, high 70%, medium 40%, low 20%. The model's answer is normalized (lowercased, "moderate" is treated as "medium") so a reasonable synonym does not cause a revert.
+## Protocol parameters
 
-## Try it
+| Parameter | Value |
+|-----------|-------|
+| Minimum collateral ratio | 150% (15000 bps) |
+| Maximum interest | 20% flat for the whole term (2000 bps) |
+| Overdue liquidation penalty | 5% of the repay amount (500 bps) |
+| Duration | 600 seconds to 365 days |
+| Grace period before overdue liquidation | 600 seconds |
+| Oracle price tolerance between validators | 2% (200 bps) |
+| Minimum principal | 10^12 wei |
+| Price references | ETH, BTC, SOL (allowlist) |
 
-Using the GenLayer CLI (`genlayer network set studionet` first):
+Why these numbers: the worst case amount owed is 1.20 x 1.05 = 126% of principal, which is
+always below the 150% minimum collateral. Collateral therefore covers every payout.
 
-```
-genlayer write 0xaD495de36EA054f66e6a7fBF65aB2B36F24e76cF create_bounty --args "https://github.com/vuejs/vuepress" "issue-42" 1000000
+## Public methods
 
-genlayer call 0xaD495de36EA054f66e6a7fBF65aB2B36F24e76cF get_bounties
+| Method | Type | Who | Description |
+|--------|------|-----|-------------|
+| `create_offer(interest_bps, duration, collateral_bps, min_price_e6, price_ref)` | write, payable | anyone | Post an offer; sent value is the principal |
+| `cancel_offer(loan_id)` | write | lender | Cancel an open offer and refund the principal |
+| `accept_offer(loan_id)` | write, payable | borrower | Post collateral and receive the principal |
+| `repay(loan_id)` | write, payable | borrower | Repay principal + interest and reclaim collateral |
+| `liquidate_overdue(loan_id)` | write | anyone | Settle a loan past due date + grace |
+| `liquidate_by_price(loan_id)` | write | lender | Settle a loan when the oracle price is below the trigger |
+| `set_paused(paused)` | write | owner | Pause new offers and new loans |
+| `get_loan(loan_id)` | view | anyone | Full loan record |
+| `get_loan_count()` | view | anyone | Number of loans (ids are 1-based) |
+| `get_total_locked()` | view | anyone | Funds currently escrowed by the contract |
+| `get_loans_by_lender(addr)` / `get_loans_by_borrower(addr)` | view | anyone | Loans for an address |
+| `is_paused()` / `get_owner()` | view | anyone | Admin state |
 
-genlayer write 0xaD495de36EA054f66e6a7fBF65aB2B36F24e76cF resolve_bounty --args 0x5f463B8CAC925dA573594E63adC1Bc3AA98229C8 issue-42_0 "https://github.com/vuejs/vuepress/pull/2500" 0x5f463B8CAC925dA573594E63adC1Bc3AA98229C8
+Loan statuses: `open`, `active`, `repaid`, `liquidated`, `cancelled`.
 
-genlayer call 0xaD495de36EA054f66e6a7fBF65aB2B36F24e76cF get_bounties
-```
+## The oracle (Intelligent Contract part)
 
-`resolve_bounty` needs a **merged** pull request on a public repo whose description makes the bug and its severity reasonably clear.
+`liquidate_by_price` uses `gl.vm.run_nondet_unsafe` with a custom validator function. The
+leader fetches the reference price from a fixed CoinGecko URL built from an allowlisted
+asset, and every validator fetches the price again on its own. A validator accepts the
+leader's price only if its own price is within 2% of it. This is a real numeric agreement
+check, not a format check, so a manipulated or stale leader value is rejected.
 
-## Verified run
+Price references are chosen from an allowlist (ETH, BTC, SOL) and never built from free user
+input, so users cannot point the oracle at arbitrary URLs.
 
-Bounty `issue-42_0` was created, then resolved against a merged security-fix PR (`vuejs/vuepress#2500`). Final state read back from the contract:
+**Important disclosure:** testnet GEN has no market price. The oracle therefore tracks a
+reference asset (for example ETH) as the lender's price trigger. On this testnet deployment
+it acts as a covenant on that reference price, not a true GEN valuation. A mainnet version
+would use a price source for the actual collateral asset.
 
-```
-status:      resolved
-severity:    medium
-pr_url:      https://github.com/vuejs/vuepress/pull/2500
-resolved_to: 0x5f463B8CAC925dA573594E63adC1Bc3AA98229C8
-amount:      1000000
-```
+## Security design
 
-## Notes for the GenVM SDK
-
-Things learned while building this that may save other builders time:
-
-- Addresses passed through the CLI arrive as `Address` objects, not strings. Declare method parameters as `Address`, not `str`, or `Address(x)` will raise a `TypeError`.
-- Use `gl.eq_principle.strict_eq(fn)` for LLM consensus and `gl.nondet.web.render(url, mode="text")` to fetch a page.
-- Keep `@allow_storage @dataclass` fields to plain types (`str`, `bool`); store amounts as strings.
-- Raise `Exception(...)` for validation failures.
-- A contract exception still shows as `ACCEPTED` at the consensus level (validators agree it reverted). Always read state back to confirm it changed.
+- **Checks-effects-interactions.** Loan state is updated before any transfer is emitted.
+- **Escrow accounting.** `locked` tracks every escrowed amount, and an unlock larger than
+  the locked total aborts the transaction.
+- **No double actions.** Every action checks the loan status, so a loan cannot be accepted,
+  repaid, cancelled, or liquidated twice, and nothing can happen after closure.
+- **Access control.** Only the lender can cancel or trigger price liquidation; only the
+  borrower can repay; only the owner can pause. A lender cannot borrow their own offer.
+- **Bounded parameters.** Interest, duration, collateral ratio, and principal are validated
+  against fixed limits.
+- **Pause cannot trap funds.** Pause only blocks new offers and new loans. Cancel, repay, and
+  both liquidations keep working.
+- **Settlement never exceeds collateral.** Seized amounts are capped at the collateral, and
+  the remainder always goes to the borrower.
 
 ## Known limitations
 
-- **No fund custody yet.** `amount` is stored as a number; no tokens are escrowed or transferred, and the payout code is left commented out until value handling is wired up.
-- **No access control on `resolve_bounty`.** Any caller can currently resolve an open bounty by supplying a creator, a merged PR, and a contributor. A production version should restrict this to the creator or a designated reviewer.
-- **PR-to-issue linkage is not verified.** The LLM checks that the PR is merged and estimates severity, but does not confirm that the PR actually closes the referenced issue.
-- **Strict consensus.** `strict_eq` requires byte-identical JSON from all validators. In testing, validators occasionally disagreed and the majority decided. `gl.eq_principle.prompt_comparative` would tolerate near-equivalent answers.
+- Testnet only and not audited.
+- Interest is flat for the whole term (no accrual over time) and there are no partial repayments.
+- The price oracle depends on a single public source (CoinGecko) and its rate limits.
+- Collateral and loan are both native GEN, and the price trigger tracks a reference asset
+  (see the disclosure above).
+- Native GEN payouts are emitted with `emit_transfer`. On Bradbury these appear as Internal
+  transfer messages in the explorer, but we observed in a separate investigation that
+  emitted transfers on Bradbury and Asimov may not move wallet balances even though contract
+  state updates correctly. Wallet balance settlement is therefore not claimed as verified;
+  see TESTING.md, section 3, for how payouts are evidenced instead.
+
+## Repository layout
+
+```text
+contracts/lending_protocol.py   the Intelligent Contract
+tests/test_lending.py           automated tests (gltest / pytest)
+TESTING.md                      test plan, automated suite, on-chain evidence
+README.md                       this file
+```
+
+## Deploy and run
+
+1. Open GenLayer Studio and paste `contracts/lending_protocol.py` (the first line pins the
+   runner version and must stay as the first line).
+2. Deploy with no constructor arguments. The deployer becomes the owner.
+3. Call `create_offer` with value (the principal) and the five arguments above.
+
+Run the automated tests:
+
+```bash
+pip install genlayer-test pytest
+gltest tests/test_lending.py
+```
