@@ -30,6 +30,10 @@ const DURATIONS = [
 const short = (a) => (a ? a.slice(0, 6) + "..." + a.slice(-4) : "");
 const same = (a, b) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
 const nowSec = () => Math.floor(Date.now() / 1000);
+const pref = (k, d) => {
+  try { return localStorage.getItem("gll_" + k) || d; } catch (e) { return d; }
+};
+const FILTERS = ["all", "open", "active", "repaid", "liquidated", "cancelled"];
 
 function fmtDuration(sec) {
   const s = Number(sec);
@@ -321,6 +325,21 @@ export default function App() {
   const [tab, setTab] = useState("market");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
+  const [balance, setBalance] = useState("");
+  const [filter, setFilter] = useState(pref("filter", "all"));
+  const [sort, setSort] = useState(pref("sort", "new"));
+
+  useEffect(() => {
+    try { localStorage.setItem("gll_filter", filter); localStorage.setItem("gll_sort", sort); } catch (e) {}
+  }, [filter, sort]);
+
+  useEffect(() => {
+    if (!account || !hasWallet()) { setBalance(""); return; }
+    window.ethereum
+      .request({ method: "eth_getBalance", params: [account, "latest"] })
+      .then((h) => setBalance(formatGen(BigInt(h), 3)))
+      .catch(() => setBalance(""));
+  }, [account, data]);
 
   const refresh = useCallback(async () => {
     try {
@@ -399,6 +418,19 @@ export default function App() {
   const loans = data ? data.loans : [];
   const market = loans.filter((l) => l.status === "open");
   const mine = loans.filter((l) => same(account, l.lender) || same(account, l.borrower));
+  const sorter = (a, b) =>
+    sort === "amount" ? (BigInt(b.principal) > BigInt(a.principal) ? 1 : -1) : Number(b.id) - Number(a.id);
+  const shownMarket = [...market].sort(sorter);
+  const shownMine = mine.filter((l) => filter === "all" || l.status === filter).sort(sorter);
+  const sum = (arr, f) => arr.reduce((t, l) => t + BigInt(f(l)), 0n);
+  const asLender = mine.filter((l) => same(account, l.lender) && (l.status === "open" || l.status === "active"));
+  const asBorrower = mine.filter((l) => same(account, l.borrower) && l.status === "active");
+  const pf = {
+    lent: sum(asLender, (l) => l.principal),
+    earn: sum(asLender.filter((l) => l.status === "active"), (l) => BigInt(l.repay_amount) - BigInt(l.principal)),
+    owed: sum(asBorrower, (l) => l.repay_amount),
+    locked: sum(asBorrower, (l) => l.collateral),
+  };
 
   return (
     <div className="app">
@@ -408,7 +440,11 @@ export default function App() {
           <div className="sub">P2P loans with oracle liquidation &middot; {CHAIN.name}</div>
         </div>
         {account ? (
-          <span className="pill">{short(account)}</span>
+          <div className="wallet">
+            <div><span className="dot" />{short(account)}</div>
+            {balance && <small>{balance} GEN</small>}
+            <button className="link" onClick={() => setAccount("")}>Disconnect</button>
+          </div>
         ) : (
           <button className="btn primary" onClick={connect}>
             Connect wallet
@@ -470,7 +506,7 @@ export default function App() {
       {data && tab === "market" && (
         <>
           {market.length === 0 && <div className="empty">No open offers yet. Create the first one.</div>}
-          {market.map((l) => (
+          {shownMarket.map((l) => (
             <LoanCard key={l.id} loan={l} account={account} busy={busy} onAction={onAction} />
           ))}
         </>
@@ -480,7 +516,28 @@ export default function App() {
         <>
           {!account && <div className="empty">Connect your wallet to see your loans.</div>}
           {account && mine.length === 0 && <div className="empty">You have no loans yet.</div>}
-          {mine.map((l) => (
+          {account && mine.length > 0 && (
+            <>
+              <div className="portfolio">
+                <div><span className="k">Lent out</span><span className="v">{formatGen(pf.lent)} GEN</span></div>
+                <div><span className="k">Interest to earn</span><span className="v">{formatGen(pf.earn)} GEN</span></div>
+                <div><span className="k">You owe</span><span className="v">{formatGen(pf.owed)} GEN</span></div>
+                <div><span className="k">Your collateral</span><span className="v">{formatGen(pf.locked)} GEN</span></div>
+              </div>
+              <div className="toolbar">
+                <div className="chips">
+                  {FILTERS.map((f) => (
+                    <button key={f} className={filter === f ? "chip on" : "chip"} onClick={() => setFilter(f)}>{f}</button>
+                  ))}
+                </div>
+                <select className="sort" value={sort} onChange={(e) => setSort(e.target.value)}>
+                  <option value="new">Newest first</option>
+                  <option value="amount">Largest first</option>
+                </select>
+              </div>
+            </>
+          )}
+          {shownMine.map((l) => (
             <LoanCard key={l.id} loan={l} account={account} busy={busy} onAction={onAction} />
           ))}
         </>
