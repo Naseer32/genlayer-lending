@@ -9,6 +9,7 @@ price oracle.
 - Network: GenLayer Bradbury testnet
 - Deployed address (v1.1.0): `0x6894FDA554e72179E067057495706cAfd5691E33`
 - Earlier version v1.0.0 (superseded): `0x6d1eF034052c5455996829849bBE3aD97AA8c66A`
+- Live app: https://frontend-t3vl.vercel.app/
 - Evidence and test results: see [TESTING.md](TESTING.md)
 
 ## How it works
@@ -29,6 +30,31 @@ price oracle.
      liquidation can happen. The lender receives the owed amount (no penalty, because the
      borrower is not in default); the borrower keeps the remainder.
 5. **Cancel.** A lender can cancel an offer nobody has accepted and get the principal back.
+
+## Web app
+
+Live at https://frontend-t3vl.vercel.app/ (Vite + React + genlayer-js, source in `frontend/`).
+
+- Connect an EVM wallet (MetaMask); the app asks to switch to Bradbury.
+- **Market:** open offers; accept one by posting collateral.
+- **Lend:** create an offer with interest, term, collateral ratio, and an optional oracle
+  price trigger. The form shows what the borrower will owe and must post.
+- **My loans:** a portfolio summary (lent out, interest to earn, amount owed, collateral),
+  status filters, sorting, and only the actions available to your role: cancel, repay,
+  liquidate overdue, liquidate by price.
+- State is read from the contract (refreshed every 30 seconds). Filter and sort choices are
+  remembered in the browser. The wallet balance is shown in the header.
+
+Run locally:
+
+```
+cd frontend
+npm install
+npm run dev
+```
+
+Set `VITE_CONTRACT_ADDRESS` to point the app at a different deployment. On Vercel, set the
+project Root Directory to `frontend`.
 
 ## Protocol parameters
 
@@ -124,6 +150,7 @@ would use a price source for the actual collateral asset.
 
 ```
 contracts/lending_protocol.py   the Intelligent Contract
+frontend/                       web app (Vite + React + genlayer-js)
 tests/test_lending.py           automated tests (gltest / pytest)
 TESTING.md                      test plan, automated suite, on-chain evidence
 README.md                       this file
