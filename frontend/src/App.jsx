@@ -402,10 +402,10 @@ export default function App() {
       if (receiptFailed(receipt)) {
         setToast({
           kind: "error",
-          text: `${label}: the contract rejected this call (rolled back). Tx ${short(hash)}. Check the loan state below.`,
+          text: `${label}: the contract rejected this call (rolled back). Tx ${hash}. Check the loan state below.`,
         });
       } else {
-        setToast({ kind: "ok", text: `${label}: accepted by validators. Tx ${short(hash)}.` });
+        setToast({ kind: "ok", text: `${label}: accepted by validators. Tx ${hash}.` });
       }
     } catch (e) {
       setToast({ kind: "error", text: `${label}: ${e.shortMessage || e.message}` });
