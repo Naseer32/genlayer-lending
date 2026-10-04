@@ -392,6 +392,23 @@ export default function App() {
     }
   }
 
+  // Outcome is decided by reading the contract state after the transaction,
+  // not by guessing from the receipt format.
+  async function confirmOutcome(fn, args, countBefore) {
+    const d = await loadAll(net);
+    setData(d);
+    if (fn === "create_offer") return d.count > countBefore;
+    const want = {
+      accept_offer: "active",
+      cancel_offer: "cancelled",
+      repay: "repaid",
+      liquidate_overdue: "liquidated",
+      liquidate_by_price: "liquidated",
+    }[fn];
+    const loan = d.loans.find((l) => String(l.id) === String(args[0]));
+    return !!loan && loan.status === want;
+  }
+
   async function onAction(label, functionName, args, value) {
     if (!account) return;
     if (!chainOk) {
@@ -407,10 +424,10 @@ export default function App() {
       finalized
         .then(() => setToast((t) => (t && t.kind === "ok" && t.text.includes(hash) ? { kind: "ok", text: `${label}: finalized. Tx ${hash}` } : t)))
         .catch(() => {});
-      if (receiptFailed(receipt)) {
+      if (!(await confirmOutcome(functionName, args, data ? data.count : 0))) {
         setToast({
           kind: "error",
-          text: `${label}: the contract rejected this call (rolled back). Tx ${hash}. Check the loan state below.`,
+          text: `${label}: no change on the contract (the call was rejected and rolled back). Tx ${hash}. Check the loan state below.`,
         });
       } else {
         setToast({ kind: "ok", text: `${label}: accepted by validators, waiting for finalization. Tx ${hash}.` });
