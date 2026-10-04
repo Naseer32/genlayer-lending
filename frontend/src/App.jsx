@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  CONTRACT_ADDRESS,
-  CHAIN,
+  NETWORKS,
   ZERO,
   GRACE_PERIOD,
   hasWallet,
@@ -326,6 +325,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
   const [balance, setBalance] = useState("");
+  const [net, setNet] = useState(pref("net", "bradbury"));
+  const N = NETWORKS[net] || NETWORKS.bradbury;
+  useEffect(() => { try { localStorage.setItem("gll_net", net); } catch (e) {} }, [net]);
   const [filter, setFilter] = useState(pref("filter", "all"));
   const [sort, setSort] = useState(pref("sort", "new"));
 
@@ -343,13 +345,14 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const d = await loadAll();
+      if (!NETWORKS[net].address) { setData(null); setLoadError("No contract is configured for this network yet."); return; }
+      const d = await loadAll(net);
       setData(d);
       setLoadError("");
     } catch (e) {
       setLoadError(e.shortMessage || e.message || "Could not load loans.");
     }
-  }, []);
+  }, [net]);
 
   useEffect(() => {
     refresh();
@@ -360,21 +363,21 @@ export default function App() {
   useEffect(() => {
     if (!hasWallet()) return;
     const onAccounts = (accs) => setAccount(accs && accs[0] ? accs[0] : "");
-    const onChain = async () => setChainOk(await getChainOk());
+    const onChain = async () => setChainOk(await getChainOk(net));
     window.ethereum.on?.("accountsChanged", onAccounts);
     window.ethereum.on?.("chainChanged", onChain);
-    getChainOk().then(setChainOk);
+    getChainOk(net).then(setChainOk);
     return () => {
       window.ethereum.removeListener?.("accountsChanged", onAccounts);
       window.ethereum.removeListener?.("chainChanged", onChain);
     };
-  }, []);
+  }, [net]);
 
   async function connect() {
     try {
-      const a = await connectWallet();
+      const a = await connectWallet(net);
       setAccount(a);
-      setChainOk(await getChainOk());
+      setChainOk(await getChainOk(net));
     } catch (e) {
       setToast({ kind: "error", text: e.shortMessage || e.message });
     }
@@ -382,8 +385,8 @@ export default function App() {
 
   async function switchNetwork() {
     try {
-      await ensureChain();
-      setChainOk(await getChainOk());
+      await ensureChain(net);
+      setChainOk(await getChainOk(net));
     } catch (e) {
       setToast({ kind: "error", text: e.shortMessage || e.message });
     }
@@ -392,20 +395,25 @@ export default function App() {
   async function onAction(label, functionName, args, value) {
     if (!account) return;
     if (!chainOk) {
-      setToast({ kind: "error", text: `Switch your wallet to ${CHAIN.name} first.` });
+      setToast({ kind: "error", text: `Switch your wallet to ${N.chain.name} first.` });
       return;
     }
     setBusy(true);
     setToast({ kind: "info", text: `${label}: confirm in your wallet, then wait for validators...` });
     try {
-      const { hash, receipt } = await send(account, functionName, args, value);
+      const { hash, receipt, finalized } = await send(net, account, functionName, args, value, (h) =>
+        setToast({ kind: "info", text: `${label}: submitted, waiting for validators. Tx ${h}` })
+      );
+      finalized
+        .then(() => setToast((t) => (t && t.kind === "ok" && t.text.includes(hash) ? { kind: "ok", text: `${label}: finalized. Tx ${hash}` } : t)))
+        .catch(() => {});
       if (receiptFailed(receipt)) {
         setToast({
           kind: "error",
           text: `${label}: the contract rejected this call (rolled back). Tx ${hash}. Check the loan state below.`,
         });
       } else {
-        setToast({ kind: "ok", text: `${label}: accepted by validators. Tx ${hash}.` });
+        setToast({ kind: "ok", text: `${label}: accepted by validators, waiting for finalization. Tx ${hash}.` });
       }
     } catch (e) {
       setToast({ kind: "error", text: `${label}: ${e.shortMessage || e.message}` });
@@ -437,7 +445,12 @@ export default function App() {
       <header>
         <div>
           <h1>GenLayer Lending</h1>
-          <div className="sub">P2P loans with oracle liquidation &middot; {CHAIN.name}</div>
+          <div className="sub">P2P loans with oracle liquidation</div>
+          <select className="netsel" value={net} onChange={(e) => setNet(e.target.value)}>
+            {Object.keys(NETWORKS).map((k) => (
+              <option key={k} value={k}>{NETWORKS[k].label}</option>
+            ))}
+          </select>
         </div>
         {account ? (
           <div className="wallet">
@@ -456,15 +469,13 @@ export default function App() {
         <div className="banner warn-b">
           Your wallet is on the wrong network.{" "}
           <button className="link" onClick={switchNetwork}>
-            Switch to {CHAIN.name}
+            Switch to {N.chain.name}
           </button>
         </div>
       )}
 
       <div className="banner info-b">
-        Testnet demo. On Bradbury, payouts are emitted as internal transfers and wallet balances
-        may not update; the loan state shown here (read from the contract) is the source of truth.
-        Price triggers track a reference asset because testnet GEN has no market price.
+        {net === "bradbury" ? "Testnet demo. On Bradbury, payouts are emitted as internal transfers and wallet balances may not update; the loan state read from the contract is the source of truth. Price triggers track a reference asset because testnet GEN has no market price." : "Studionet demo network: transfers settle here, so wallet balances change when loans are accepted, repaid or liquidated. Price triggers track a reference asset."}
       </div>
 
       {toast && (
@@ -549,7 +560,7 @@ export default function App() {
 
       <footer>
         Contract{" "}
-        <code>{short(CONTRACT_ADDRESS)}</code> &middot;{" "}
+        <code>{short(N.address || "0x0000000000000000000000000000000000000000")}</code> &middot;{" "}
         <button className="link" onClick={refresh}>
           Refresh
         </button>

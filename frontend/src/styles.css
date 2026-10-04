@@ -107,3 +107,6 @@ code { background: var(--soft); padding: 2px 7px; border-radius: 6px; }
   .actions { flex-direction: row; flex-wrap: wrap; }
   .actions .input { max-width: 200px; }
 }
+
+.netsel { margin-top: 8px; background: rgba(255,255,255,0.18); color: #fff; border: 1px solid rgba(255,255,255,0.4); border-radius: 10px; padding: 6px 8px; font-size: 13px; }
+.netsel option { color: #0f172a; }

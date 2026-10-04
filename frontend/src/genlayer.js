@@ -1,18 +1,27 @@
 import { createClient } from "genlayer-js";
-import { testnetBradbury } from "genlayer-js/chains";
+import { testnetBradbury, studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
 
-export const CONTRACT_ADDRESS =
-  import.meta.env.VITE_CONTRACT_ADDRESS || "0x6894FDA554e72179E067057495706cAfd5691E33";
-export const CHAIN = testnetBradbury;
+export const NETWORKS = {
+  bradbury: {
+    label: "Bradbury",
+    chain: testnetBradbury,
+    address: import.meta.env.VITE_CONTRACT_ADDRESS || "0x6894FDA554e72179E067057495706cAfd5691E33",
+  },
+  studionet: {
+    label: "Studionet",
+    chain: studionet,
+    address: import.meta.env.VITE_STUDIONET_CONTRACT || "",
+  },
+};
 export const ZERO = "0x0000000000000000000000000000000000000000";
 export const GRACE_PERIOD = 600; // seconds, mirrors the contract constant
 
-const readClient = createClient({ chain: CHAIN });
-
-// ---------------------------------------------------------------------------
-// decoding helpers: genlayer-js may return Map / bigint, the UI wants plain data
-// ---------------------------------------------------------------------------
+const readClients = {};
+function readClient(net) {
+  if (!readClients[net]) readClients[net] = createClient({ chain: NETWORKS[net].chain });
+  return readClients[net];
+}
 
 export function normalize(v) {
   if (v instanceof Map) {
@@ -30,10 +39,6 @@ export function normalize(v) {
   return v;
 }
 
-// ---------------------------------------------------------------------------
-// amounts
-// ---------------------------------------------------------------------------
-
 export function parseGen(input) {
   const t = String(input).trim();
   if (t === "" || t === "." || !/^\d*\.?\d*$/.test(t)) throw new Error("Invalid amount");
@@ -49,64 +54,53 @@ export function formatGen(wei, dp = 4) {
   return `${w}.${f}`.replace(/\.?0+$/, "") || "0";
 }
 
-// ---------------------------------------------------------------------------
-// reads
-// ---------------------------------------------------------------------------
-
-async function read(functionName, args = []) {
-  const res = await readClient.readContract({
-    address: CONTRACT_ADDRESS,
+async function read(net, functionName, args = []) {
+  const res = await readClient(net).readContract({
+    address: NETWORKS[net].address,
     functionName,
     args,
   });
   return normalize(res);
 }
 
-export async function loadAll(limit = 60) {
-  const count = Number(await read("get_loan_count"));
+export async function loadAll(net, limit = 60) {
+  const count = Number(await read(net, "get_loan_count"));
   const ids = [];
   for (let i = count; i >= 1 && ids.length < limit; i--) ids.push(i);
   const [loans, locked, paused] = await Promise.all([
-    Promise.all(ids.map((id) => read("get_loan", [id]))),
-    read("get_total_locked"),
-    read("is_paused"),
+    Promise.all(ids.map((id) => read(net, "get_loan", [id]))),
+    read(net, "get_total_locked"),
+    read(net, "is_paused"),
   ]);
   return { count, loans, locked: String(locked), paused: Boolean(paused) };
 }
-
-// ---------------------------------------------------------------------------
-// wallet
-// ---------------------------------------------------------------------------
 
 export function hasWallet() {
   return typeof window !== "undefined" && !!window.ethereum;
 }
 
-export async function getChainOk() {
+export async function getChainOk(net) {
   if (!hasWallet()) return false;
   const id = await window.ethereum.request({ method: "eth_chainId" });
-  return parseInt(id, 16) === Number(CHAIN.id);
+  return parseInt(id, 16) === Number(NETWORKS[net].chain.id);
 }
 
-export async function ensureChain() {
-  const chainId = "0x" + Number(CHAIN.id).toString(16);
+export async function ensureChain(net) {
+  const chain = NETWORKS[net].chain;
+  const chainId = "0x" + Number(chain.id).toString(16);
   try {
-    await window.ethereum.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId }],
-    });
+    await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
   } catch (err) {
-    // 4902 = chain not added yet (some wallets use -32603)
     if (err && (err.code === 4902 || err.code === -32603)) {
-      const explorer = CHAIN.blockExplorers && CHAIN.blockExplorers.default;
+      const explorer = chain.blockExplorers && chain.blockExplorers.default;
       await window.ethereum.request({
         method: "wallet_addEthereumChain",
         params: [
           {
             chainId,
-            chainName: CHAIN.name,
-            nativeCurrency: CHAIN.nativeCurrency,
-            rpcUrls: CHAIN.rpcUrls.default.http,
+            chainName: chain.name,
+            nativeCurrency: chain.nativeCurrency,
+            rpcUrls: chain.rpcUrls.default.http,
             blockExplorerUrls: explorer && explorer.url ? [explorer.url] : undefined,
           },
         ],
@@ -117,37 +111,39 @@ export async function ensureChain() {
   }
 }
 
-export async function connectWallet() {
+export async function connectWallet(net) {
   if (!hasWallet()) throw new Error("No wallet found. Open this page in MetaMask's browser.");
   const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
-  await ensureChain();
+  await ensureChain(net);
   return accounts[0];
 }
 
-// ---------------------------------------------------------------------------
-// writes
-// ---------------------------------------------------------------------------
-
-export async function send(account, functionName, args, valueWei = 0n) {
-  const client = createClient({ chain: CHAIN, account });
+// Lifecycle: submitted (hash known) -> accepted by validators -> finalized.
+// Returns after "accepted"; `finalized` is a promise that resolves later.
+export async function send(net, account, functionName, args, valueWei = 0n, onSubmitted = () => {}) {
+  const client = createClient({ chain: NETWORKS[net].chain, account });
   const hash = await client.writeContract({
-    address: CONTRACT_ADDRESS,
+    address: NETWORKS[net].address,
     functionName,
     args,
     value: valueWei,
   });
+  onSubmitted(hash);
   const receipt = await client.waitForTransactionReceipt({
     hash,
     status: TransactionStatus.ACCEPTED,
     retries: 200,
     interval: 3000,
   });
-  return { hash, receipt };
+  const finalized = client.waitForTransactionReceipt({
+    hash,
+    status: TransactionStatus.FINALIZED,
+    retries: 600,
+    interval: 5000,
+  });
+  return { hash, receipt, finalized };
 }
 
-// Best effort: a transaction can be "accepted" by consensus while the contract
-// call itself raised an error (state rolled back). The loan state read after the
-// transaction is always the source of truth.
 export function receiptFailed(receipt) {
   try {
     const s = JSON.stringify(receipt, (k, v) => (typeof v === "bigint" ? v.toString() : v));

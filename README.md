@@ -31,6 +31,23 @@ price oracle.
      borrower is not in default); the borrower keeps the remainder.
 5. **Cancel.** A lender can cancel an offer nobody has accepted and get the principal back.
 
+## Why this matters
+
+On-chain lending needs a way to decide when a loan is unsafe, and every approach has a
+trust problem: a single price feed owner can be wrong or corrupted, and a plain contract
+cannot read the outside world. Here the decision is made by GenLayer validators who each
+fetch the price themselves and must agree on both the price and the liquidation outcome.
+No lender, admin, or single data provider decides alone, and the call fails closed when
+validators disagree near the trigger.
+
+What makes it different from a basic lending demo: bounded interest and collateral that
+always cover the worst-case payout, a deterministic overdue path that needs no oracle,
+exits that a pause can never block, and a web app that shows the full transaction
+lifecycle (submitted, accepted, finalized).
+
+Roadmap: multiple collateral assets with real price sources, partial repayments,
+interest that accrues over time, and a mainnet deployment after an audit.
+
 ## Web app
 
 Live at https://frontend-t3vl.vercel.app/ (Vite + React + genlayer-js, source in `frontend/`).
@@ -53,7 +70,7 @@ npm install
 npm run dev
 ```
 
-Set `VITE_CONTRACT_ADDRESS` to point the app at a different deployment. On Vercel, set the
+Set `VITE_CONTRACT_ADDRESS` to point the Bradbury network at a different deployment, and `VITE_STUDIONET_CONTRACT` to enable the Studionet option (where native transfers settle, so wallet balances visibly change). On Vercel, set the
 project Root Directory to `frontend`.
 
 ## Protocol parameters
