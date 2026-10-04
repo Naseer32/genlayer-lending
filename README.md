@@ -70,7 +70,7 @@ npm install
 npm run dev
 ```
 
-Set `VITE_CONTRACT_ADDRESS` to point the Bradbury network at a different deployment, and `VITE_STUDIONET_CONTRACT` to enable the Studionet option (where native transfers settle, so wallet balances visibly change). On Vercel, set the
+Set `VITE_CONTRACT_ADDRESS` to point the Bradbury network at a different deployment, and `VITE_STUDIONET_CONTRACT` to enable the Studionet option (a second test network for the same flow). On Vercel, set the
 project Root Directory to `frontend`.
 
 ## Protocol parameters
@@ -157,11 +157,12 @@ would use a price source for the actual collateral asset.
 - The price oracle depends on a single public source (CoinGecko) and its rate limits.
 - Collateral and loan are both native GEN, and the price trigger tracks a reference asset
   (see the disclosure above).
-- Native GEN payouts are emitted with `emit_transfer`. On Bradbury these appear as Internal
-  transfer messages in the explorer, but we observed in a separate investigation that
-  emitted transfers on Bradbury and Asimov may not move wallet balances even though contract
-  state updates correctly. Wallet balance settlement is therefore not claimed as verified;
-  see TESTING.md, section 3, for how payouts are evidenced instead.
+- Native GEN payouts are emitted with `emit_transfer`. On the GenLayer test networks (Bradbury,
+  and Studionet in our tests) the payout appears as an emitted message from the contract and
+  the contract's escrow balance goes down, but the recipient wallet balance did not increase.
+  We reproduced this with a minimal test contract that only deposits and sends GEN, so it is not
+  specific to this protocol. Wallet balance settlement is therefore not claimed as verified;
+  see TESTING.md for how payouts are evidenced instead.
 
 ## Repository layout
 

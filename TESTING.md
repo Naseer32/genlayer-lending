@@ -166,6 +166,40 @@ trigger and liquidation must be refused.
 GenLayer chain transaction hash for the rejected liquidation:
 `0x5500fe286dc32fbd4a4b3ccd8423f5f372207a3376547a6b1953b29f3ef33d7b`
 
+## 2c. Web app run on Studionet and the transfer probe
+
+Studionet deployment of v1.1.0: `0x336b2962551BDea8C948Fd389d4e5C2EbB2969E5`, used through the
+live web app (https://frontend-t3vl.vercel.app/, network switch set to Studionet).
+
+| Action (through the app) | Transaction hash | Result |
+|--------------------------|------------------|--------|
+| Create offer, 1 GEN | `0x3b92ea24c86021c4a0a313379b9df4f6d82d4e0496198e5b67336796b802ccd9` | FINALIZED, GenVM result SUCCESS, return value 1 (loan #1 created) |
+| Create offer, 13 GEN | `0x285a96da059299846292ae7e35b4d3357cdc077e05ed1a3fc37c99bf79f8568f` | Offer created, 13 GEN escrowed |
+| Accept offer, 19.5 GEN collateral | `0x55bd11f4f6b4d3e048e3d3b00efc7d81241ea4e4f7571823afb7cf83a20ec965` | Loan became `active`; contract emitted the 13 GEN principal payout |
+| Principal payout message (contract to borrower wallet, 13 GEN) | `0x9e33fa2be18457a0a811b73ebfe6a138323e45244d3f00913090f85a2f9bc767` | FINALIZED, but GenVM result Error; the borrower wallet balance did not increase |
+
+What this showed: the contract state and the escrow side behaved as designed (loan active,
+13 GEN left the contract, 19.5 GEN collateral stayed), and the payout message was addressed to
+the correct wallet with the correct amount. The recipient balance did not increase.
+
+Transfer probe (isolating the cause): `transfer_probe.py` is a 30-line contract that only
+accepts a deposit and sends GEN back out with `emit_transfer` (default timing and
+`on="accepted"`). Deployed on Studionet at `0xF720E02d2b2d1962e466E0a83c3293e70A5b128F`.
+`deposit`, `send_default` and `send_accepted` all returned SUCCESS and each produced an emitted
+message from the contract (shown by the explorer with GenVM result ERROR). The recipient
+balance did not increase while the depositing wallet balance went down. The full transaction
+list, with hashes, is on the probe contract page in the explorer.
+
+Conclusion: emitted native transfers did not credit the recipient wallet, even in a minimal
+contract that has nothing to do with lending. This points to network behaviour rather than the
+protocol logic, and is why wallet-balance settlement is not claimed as verified anywhere in this
+submission. The contract-side effects of every payout (status transitions, escrow counter,
+the contract's own balance) are what is evidenced.
+
+Also found during this run: the first version of the app guessed failures from the receipt
+format and reported a successful `create_offer` as "rolled back". It now decides the outcome by
+reading the contract state after each transaction (loan count or loan status).
+
 ## 3. Evidence notes and limits
 
 - The explorer output did not expose the revert message for the rejected transactions. The
