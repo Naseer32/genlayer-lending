@@ -433,7 +433,25 @@ export default function App() {
         setToast({ kind: "ok", text: `${label}: accepted by validators, waiting for finalization. Tx ${hash}.` });
       }
     } catch (e) {
-      setToast({ kind: "error", text: `${label}: ${e.shortMessage || e.message}` });
+      const msg = e.shortMessage || e.message || "";
+      if (/reject|denied|cancel/i.test(msg)) {
+        setToast({ kind: "error", text: `${label}: cancelled in your wallet.` });
+      } else {
+        // The RPC can error even though the transaction went through, so check the contract.
+        setToast({ kind: "info", text: `${label}: the network returned an error (${msg}). Checking the contract state...` });
+        let confirmed = false;
+        for (let i = 0; i < 10 && !confirmed; i++) {
+          await new Promise((r) => setTimeout(r, 6000));
+          try {
+            confirmed = await confirmOutcome(functionName, args, data ? data.count : 0);
+          } catch (err) {}
+        }
+        setToast(
+          confirmed
+            ? { kind: "ok", text: `${label}: went through (confirmed from the contract state).` }
+            : { kind: "error", text: `${label}: could not confirm. Check the Loans list and your wallet before retrying.` }
+        );
+      }
     } finally {
       setBusy(false);
       await refresh();
@@ -492,7 +510,7 @@ export default function App() {
       )}
 
       <div className="banner info-b">
-        {net === "bradbury" ? "Testnet demo. On Bradbury, payouts are emitted as internal transfers and wallet balances may not update; the loan state read from the contract is the source of truth. Price triggers track a reference asset because testnet GEN has no market price." : "Studionet demo network: transfers settle here, so wallet balances change when loans are accepted, repaid or liquidated. Price triggers track a reference asset."}
+        {net === "bradbury" ? "Testnet demo. On Bradbury, payouts are emitted as internal transfers and wallet balances may not update; the loan state read from the contract is the source of truth. Price triggers track a reference asset because testnet GEN has no market price." : "Studionet demo network. Payouts are emitted as transfers from the contract, but recipient wallet balances may not update here either (reproduced with a minimal test contract); the loan state and the contract escrow balance are the source of truth. Price triggers track a reference asset."}
       </div>
 
       {toast && (

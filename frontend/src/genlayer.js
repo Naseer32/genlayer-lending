@@ -118,6 +118,21 @@ export async function connectWallet(net) {
   return accounts[0];
 }
 
+// RPC nodes sometimes return a transient "unknown RPC error" while polling.
+// Retry a few times before giving up (the transaction itself is already sent).
+async function waitStatus(client, hash, status, retries, interval) {
+  let lastErr;
+  for (let i = 0; i < 3; i++) {
+    try {
+      return await client.waitForTransactionReceipt({ hash, status, retries, interval });
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 4000));
+    }
+  }
+  throw lastErr;
+}
+
 // Lifecycle: submitted (hash known) -> accepted by validators -> finalized.
 // Returns after "accepted"; `finalized` is a promise that resolves later.
 export async function send(net, account, functionName, args, valueWei = 0n, onSubmitted = () => {}) {
@@ -129,18 +144,8 @@ export async function send(net, account, functionName, args, valueWei = 0n, onSu
     value: valueWei,
   });
   onSubmitted(hash);
-  const receipt = await client.waitForTransactionReceipt({
-    hash,
-    status: TransactionStatus.ACCEPTED,
-    retries: 200,
-    interval: 3000,
-  });
-  const finalized = client.waitForTransactionReceipt({
-    hash,
-    status: TransactionStatus.FINALIZED,
-    retries: 600,
-    interval: 5000,
-  });
+  const receipt = await waitStatus(client, hash, TransactionStatus.ACCEPTED, 100, 3000);
+  const finalized = waitStatus(client, hash, TransactionStatus.FINALIZED, 300, 5000);
   return { hash, receipt, finalized };
 }
 
