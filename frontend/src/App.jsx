@@ -409,6 +409,18 @@ export default function App() {
     return !!loan && loan.status === want;
   }
 
+  // Reads right after a transaction can lag behind the node, so poll the
+  // contract state for about 30 seconds before deciding that nothing changed.
+  async function confirmWithRetry(fn, args, countBefore, tries = 6) {
+    for (let i = 0; i < tries; i++) {
+      try {
+        if (await confirmOutcome(fn, args, countBefore)) return true;
+      } catch (e) {}
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, 5000));
+    }
+    return false;
+  }
+
   async function onAction(label, functionName, args, value) {
     if (!account) return;
     if (!chainOk) {
@@ -424,7 +436,7 @@ export default function App() {
       finalized
         .then(() => setToast((t) => (t && t.kind === "ok" && t.text.includes(hash) ? { kind: "ok", text: `${label}: finalized. Tx ${hash}` } : t)))
         .catch(() => {});
-      if (!(await confirmOutcome(functionName, args, data ? data.count : 0))) {
+      if (!(await confirmWithRetry(functionName, args, data ? data.count : 0))) {
         setToast({
           kind: "error",
           text: `${label}: no change on the contract (the call was rejected and rolled back). Tx ${hash}. Check the loan state below.`,

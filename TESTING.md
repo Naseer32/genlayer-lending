@@ -91,6 +91,29 @@ sides of the trigger). It cannot be forced on a live network because it depends 
 market prices moving inside a 2% band around a trigger. It is covered by the design of the
 validator function (check 3 above), not by a recorded transaction.
 
+### Loans #5 and #6: run through the live web app (Rabby wallet)
+
+Both loans used a reference asset of ETH with a price trigger, driven entirely from the app
+(https://frontend-t3vl.vercel.app/ on Bradbury).
+
+| Loan | Step | Transaction hash | Result |
+|------|------|------------------|--------|
+| #5 (trigger $2,000) | Create offer | `0x924bb409829c46b5249d7ca7b03d553b2296b519bbab968e8e5a0f3e32185390` | Accepted by validators |
+| #5 | Accept offer | `0xec8ad8ca3fbe502a138680f7b76aa7c8555343ab683088f801a59b2f7e5510d5` | Accepted by validators, loan active |
+| #5 | Liquidate by price (lender) | `0xdd5cd20efeb1940ad1a4db91d7bd4497c4fea5f6ec8428dd0bc82d4aa6775280` | Refused, no change to the loan (consistent with ETH trading above the $2,000 trigger) |
+| #5 | Liquidate overdue, after due date and grace | `0x6602d44cbee49425b7a2184d35e84c9fb00c08d925d2c4a8b75d24d86fadb08f` | Accepted; loan became `liquidated` through the deterministic overdue path |
+| #6 (trigger $2,900) | Create offer | `0x372cb344b11a6b07829d649dec7a03a69d8345c4ef2a4c8f0e55bf7510242af4` | Successful in the explorer (the app first reported it as rolled back, see note below) |
+| #6 | Accept offer | `0xc31b12969b56aa51df65c52e84fcfcddb9e3aba0751410b4333d3e6f3996ef13` | Accepted by validators, loan active |
+| #6 | Liquidate by price (lender) | `0x7dee959a79ca67ad7157d26c1051e67038ca0af7487ddb675493fa4013be8356` | Accepted; loan became `liquidated` by the oracle path (validators agreed the price was below the trigger) |
+
+Together these show both liquidation paths and both oracle outcomes (refused above the trigger,
+allowed below it) on Bradbury through the app, in addition to the direct contract calls above.
+
+Note on the app: when loan #6 was created the app reported "rolled back" although the explorer
+showed success. The app decided the outcome by reading the contract state immediately after the
+transaction, and the node had not yet reflected the new loan. The app now re-checks the contract
+state for about 30 seconds before reporting that nothing changed.
+
 ## 2b. Earlier deployment (v1.0.0, address `0x6d1eF034052c5455996829849bBE3aD97AA8c66A`)
 
 Evidence from the first version. Everything except the price-liquidation tests (loans #5
@@ -177,6 +200,10 @@ live web app (https://frontend-t3vl.vercel.app/, network switch set to Studionet
 | Create offer, 13 GEN | `0x285a96da059299846292ae7e35b4d3357cdc077e05ed1a3fc37c99bf79f8568f` | Offer created, 13 GEN escrowed |
 | Accept offer, 19.5 GEN collateral | `0x55bd11f4f6b4d3e048e3d3b00efc7d81241ea4e4f7571823afb7cf83a20ec965` | Loan became `active`; contract emitted the 13 GEN principal payout |
 | Principal payout message (contract to borrower wallet, 13 GEN) | `0x9e33fa2be18457a0a811b73ebfe6a138323e45244d3f00913090f85a2f9bc767` | FINALIZED, but GenVM result Error; the borrower wallet balance did not increase |
+| Repay (borrower) | `0xf43d2d4fd28ba12431c11a68287d5429dde46b82d96af3170886a75a7f0df438` | App showed the green success message; My loans showed the loan as `repaid` |
+
+The full loan lifecycle (create, accept, repay) was completed through the live app on
+Studionet, with the loan moving open, active, repaid.
 
 What this showed: the contract state and the escrow side behaved as designed (loan active,
 13 GEN left the contract, 19.5 GEN collateral stayed), and the payout message was addressed to
