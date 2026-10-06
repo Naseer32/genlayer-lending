@@ -45,8 +45,7 @@ always cover the worst-case payout, a deterministic overdue path that needs no o
 exits that a pause can never block, and a web app that shows the full transaction
 lifecycle (submitted, accepted, finalized).
 
-Roadmap: multiple collateral assets with real price sources, partial repayments,
-interest that accrues over time, and a mainnet deployment after an audit.
+See [Status and roadmap](#status-and-roadmap) for where the project stands and what comes next.
 
 ## Web app
 
@@ -149,6 +148,43 @@ would use a price source for the actual collateral asset.
   both liquidations keep working.
 - **Settlement never exceeds collateral.** Seized amounts are capped at the collateral, and
   the remainder always goes to the borrower.
+
+## Status and roadmap
+
+### Where we are
+
+| Area | Status |
+|------|--------|
+| Contract v1.1.0 | Deployed on Bradbury (`0x6894FDA554e72179E067057495706cAfd5691E33`) and Studionet (`0x336b2962551BDea8C948Fd389d4e5C2EbB2969E5`) |
+| Oracle consensus | Validators agree on the price (within 2%) and on the liquidation outcome. Added in v1.1.0 after review feedback that the decision itself was not bound |
+| Automated tests | 20 gltest cases pass on Studionet (lifecycle, access control, double actions, oracle accept and refuse, pause, validation) |
+| Web app | Live at https://frontend-t3vl.vercel.app/ with a Bradbury/Studionet switch, portfolio view, filters, and submitted/accepted/finalized status |
+| On-chain evidence | Loans driven through the app on Bradbury covering both liquidation paths and both oracle outcomes (see [TESTING.md](TESTING.md)) |
+| Known network limit | Emitted payouts did not credit recipient wallets on the test networks; reproduced with a minimal probe contract, so contract state is the evidence |
+
+### Roadmap
+
+**Next (still on testnet)**
+
+1. **More than one price source.** Fetch from two or more independent sources and require
+   validators to agree on the median, so no single data provider (or its rate limit) is a
+   point of failure.
+2. **Partial repayment and collateral top-up.** Let borrowers repay in parts and add
+   collateral to avoid a liquidation.
+3. **Interest that accrues over time.** Replace the flat term interest with accrual, so early
+   repayment costs less.
+4. **Payout verification.** Re-run the transfer probe on each test network release. Once
+   emitted transfers credit wallets, add wallet-balance assertions to the test suite.
+5. **Better history.** Per-loan detail pages and an event timeline in the app.
+
+**Later**
+
+6. **Multiple collateral assets** with a real price source for the collateral itself (instead
+   of a reference asset), once the network supports it.
+7. **Pooled lending** with liquidity pools and an incentive for third-party liquidators.
+8. **Hardening.** Property-based tests for the core invariants (payouts never exceed escrow,
+   collateral always covers the worst case), then an independent review before any
+   mainnet deployment.
 
 ## Known limitations
 
