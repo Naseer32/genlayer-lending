@@ -9,7 +9,7 @@ price oracle.
 - Network: GenLayer Bradbury testnet
 - Deployed address (v1.1.0): `0x6894FDA554e72179E067057495706cAfd5691E33`
 - Earlier version v1.0.0 (superseded): `0x6d1eF034052c5455996829849bBE3aD97AA8c66A`
-- Live app: https://frontend-t3vl.vercel.app/
+- Live app: https://genlayer-lending.vercel.app/
 - Evidence and test results: see [TESTING.md](TESTING.md)
 
 ## How it works
